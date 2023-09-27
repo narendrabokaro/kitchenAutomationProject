@@ -41,7 +41,7 @@ long motionSensorStatus;
 
 // Change this value Accordlingly (All are in mintues)
 int nonActiveHourDuration = 5;
-int activeHourDuration = 45;
+int activeHourDuration = 30;
 int shortAlarmIncrementDuration = 3;
 int longAlarmIncrementDuration = 15;
 int longLookUpPeriod = 5;
@@ -84,10 +84,10 @@ Active Time frame between - 6AM to 7AM and 6PM to 9PM
 */
 
 // Active hours
-struct Time morningActiveStartTime = {6, 0};    // 6.00AM to 7.00AM
+struct Time morningActiveStartTime = {5, 0};    // 5.00AM to 7.00AM
 struct Time morningActiveEndTime = {7, 0};
-struct Time eveningActiveStartTime = {18, 0};   // 6.00PM to 10.00PM 
-struct Time eveningActiveEndTime = {23, 30};
+struct Time eveningActiveStartTime = {18, 0};   // 6.00PM to 10.30PM 
+struct Time eveningActiveEndTime = {22, 30};
 
 // Indicate (boolean) if time if greater/less than given time
 bool diffBtwTimePeriod(struct Time start, struct Time stop) {

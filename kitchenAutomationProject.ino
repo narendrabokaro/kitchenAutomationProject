@@ -9,39 +9,44 @@
 
   version - 2.0.0
   Updates/ Fixes [status]
+  > RTC change from DS1302 to DS1307 (two pins)
+  > isDataLoggingEnabled - removed this feature
   > Including motion sensor to catch the activities before closing the light, if found then increase the time
+  > Changed the baud rate to 115200
 
-  Debug instructions -
-  1> Always check the active hours for bathroom lighting. Standard time - 6pm to 7am
+  Debug info -
+  1> Always check the active hours for lighting. Standard time - 6pm to 7am
   2> Check for bathroom light duration in minute. means how long the bulb will glow once turned ON
  *************************************************************/
-#include <FS.h>
-#include <string.h>
-#include <ThreeWire.h>  
-#include <RtcDS1302.h>
+// For RTC module (DS1307) - Connected to I2C GPIOs (D1 and D2)
+#include "RTClib.h"
 
 // GPIO Pin configuration details
 // ------------------------------
-#define kitchenMotionSensor D0
-#define kitchBulbRelay D1
+// D1 & D2 - Reserved for I2C enabled devices (DS1307 RTC)
+#define kitchBulbRelay D5
 #define kitchenBulbSwitch D6
+#define kitchenMotionSensor D7
 
-// ThreeWire myWire(D4,D5,D2); // IO, SCLK, CE
-ThreeWire myWire(D4,D5,D2);
-RtcDS1302<ThreeWire> Rtc(myWire);
-RtcDateTime currentTime;
+// D1(SCL) and D2(SDA) allotted to RTC module DS1307
+RTC_DS1307 rtc;
+DateTime currentTime;
 
 // Basic configuration variables
 char datestring[20];
+
 // Tell whether LED bulb is On/ Off
 boolean isKitchenLedOn = false;
 long motionSensorStatus;
-// Data logger file name
-String fileName = "/logdata.txt";
-// Change this value Accordlingly
-int nonActiveHourDuration = 5;    // in minute
-int activeHourDuration = 45;    // in minute
-int kitchenLightOnDuration = nonActiveHourDuration;    // In minutes
+
+// Change this value Accordlingly (All are in mintues)
+int nonActiveHourDuration = 5;
+int activeHourDuration = 45;
+int shortAlarmIncrementDuration = 3;
+int longAlarmIncrementDuration = 15;
+int longLookUpPeriod = 5;
+int shortLookUpPeriod = 2;
+int kitchenLightOnDuration = nonActiveHourDuration;
 
 // Check whether motion detected before closing the light and then we extend the alarm by 3 minute
 bool isAlarmUpdated = false;
@@ -54,7 +59,6 @@ struct alarm {
     // Flag indicate whether alarm triggered or not
     int isAlarmTriggered;
     int duration;
-    char whomToActivate[25];
 
     int endTimeHour;
     int endTimeMinute;
@@ -83,7 +87,7 @@ Active Time frame between - 6AM to 7AM and 6PM to 9PM
 struct Time morningActiveStartTime = {6, 0};    // 6.00AM to 7.00AM
 struct Time morningActiveEndTime = {7, 0};
 struct Time eveningActiveStartTime = {18, 0};   // 6.00PM to 10.00PM 
-struct Time eveningActiveEndTime = {22, 0};
+struct Time eveningActiveEndTime = {23, 30};
 
 // Indicate (boolean) if time if greater/less than given time
 bool diffBtwTimePeriod(struct Time start, struct Time stop) {
@@ -97,107 +101,31 @@ bool diffBtwTimePeriod(struct Time start, struct Time stop) {
 
 // Set light ON duration in case time fall btw active hours
 void checkActiveHours() {
-    boolean morningActiveHour = diffBtwTimePeriod({currentTime.Hour(), currentTime.Minute()}, morningActiveStartTime) && diffBtwTimePeriod(morningActiveEndTime, {currentTime.Hour(), currentTime.Minute()});
-    boolean eveningActiveHour = diffBtwTimePeriod({currentTime.Hour(), currentTime.Minute()}, eveningActiveStartTime) && diffBtwTimePeriod(eveningActiveEndTime, {currentTime.Hour(), currentTime.Minute()});
+    boolean morningActiveHour = diffBtwTimePeriod({currentTime.hour(), currentTime.minute()}, morningActiveStartTime) && diffBtwTimePeriod(morningActiveEndTime, {currentTime.hour(), currentTime.minute()});
+    boolean eveningActiveHour = diffBtwTimePeriod({currentTime.hour(), currentTime.minute()}, eveningActiveStartTime) && diffBtwTimePeriod(eveningActiveEndTime, {currentTime.hour(), currentTime.minute()});
 
     if (morningActiveHour || eveningActiveHour) {
         // Keep the bulb On when its a active hour
         kitchenLightOnDuration = activeHourDuration;
+        Serial.println("active hour found");
     } else {
         // Default light duration
         kitchenLightOnDuration = nonActiveHourDuration;
+        Serial.println("No active hour found");
     }
 }
 
-void printDateTime(const RtcDateTime& dt) {
+void printDateTime(const DateTime& dt) {
     snprintf_P(datestring, 
             countof(datestring),
             PSTR("%02u/%02u/%04u:%02u.%02u.%02u:"),
-            dt.Month(),
-            dt.Day(),
-            dt.Year(),
-            dt.Hour(),
-            dt.Minute(),
-            dt.Second() );
+            dt.month(),
+            dt.day(),
+            dt.year(),
+            dt.hour(),
+            dt.minute(),
+            dt.second() );
     Serial.print(datestring);
-}
-
-// Log the data into the file
-void writeFile(char msg[20]) {
-    File file = SPIFFS.open(fileName, "a");
-
-    if (!file) {
-      Serial.println("Error opening file for writing");
-      return;
-    }
-
-    // Format the string
-    char printString[50];
-    printDateTime(currentTime);
-    strcat(printString, datestring);
-    strcat(printString, msg);
-
-    int bytesWritten = file.print(printString);
-
-    if (bytesWritten == 0) {
-      Serial.println("File write failed");
-      return;
-    }
-
-    file.close(); 
-}
-
-// Create a empty file with headers
-void createFile() {
-    File file = SPIFFS.open(fileName, "w");
-
-    if (!file) {
-      Serial.println("Error opening file for writing");
-      return;
-    }
-
-    int bytesWritten = file.print("Date:Time:Location:Status\n");
-
-    if (bytesWritten == 0) {
-      Serial.println("File write failed");
-      return;
-    }
-
-    file.close();
-}
-
-// Read the specified file
-void readFile() {
-    File file = SPIFFS.open(fileName, "r");
-
-    if (!file) {
-      Serial.println("Failed to open file for reading");
-      return;
-    }
-
-    while (file.available()) {
-      Serial.write(file.read());
-    }
-
-    file.close();
-}
-
-void fileSystemMount() {
-    bool success = SPIFFS.begin();
-
-    if (!success) {
-      Serial.println("Error mounting the file system");
-      return;
-    }
-
-    // If file not exists then create it first
-    if (!SPIFFS.exists(fileName)) {
-        Serial.println("Preparing a fresh file to write.");
-        createFile();
-    } else {
-        Serial.print("Good, file exist .. lets read the file data");
-        readFile();
-    }
 }
 
 /*
@@ -230,10 +158,8 @@ int setHour(int providedHour) {
 }
 
 /*
-  Description - Set the alarm
-  alarmId Unique ID for each alarm
-  alarmType [1 for Hour | 2 for Minute]
-  duration Duration of alarm (i.e. For how long you want to set alarm)
+  Description - Update the alarm
+  Only update the 
 */
 void updateAlarm(int alarmId, int alarmType, int duration) {
     if (activeAlarm[alarmId].alarmId == alarmId) {
@@ -259,6 +185,8 @@ void updateAlarm(int alarmId, int alarmType, int duration) {
                 activeAlarm[alarmId].endTimeMinute = tempMinute;
             }
         }
+
+        activeAlarm[alarmId].endTimeSecond = currentTime.second();
     }
 }
 
@@ -282,44 +210,52 @@ void setAlarm(int alarmId, int alarmType, int duration) {
     activeAlarm[alarmId].duration = duration;
 
     // alarmType for Hour
-    tempHour = currentTime.Hour() + duration;
-    activeAlarm[alarmId].endTimeHour = alarmType == 1 ? setHour(tempHour) : currentTime.Hour();
+    tempHour = currentTime.hour() + duration;
+    activeAlarm[alarmId].endTimeHour = alarmType == 1 ? setHour(tempHour) : currentTime.hour();
 
     // alarmType for Minute
-    tempMinute = currentTime.Minute() + duration;
+    tempMinute = currentTime.minute() + duration;
     if (alarmType == 2) {
         if (tempMinute > 59) {
             activeAlarm[alarmId].endTimeMinute = tempMinute - 60;
-            tempHour = currentTime.Hour() + 1;
+            tempHour = currentTime.hour() + 1;
             activeAlarm[alarmId].endTimeHour = setHour(tempHour);
         } else {
             activeAlarm[alarmId].endTimeMinute = tempMinute;
         }
     } else {
-        activeAlarm[alarmId].endTimeMinute = currentTime.Minute();
+        activeAlarm[alarmId].endTimeMinute = currentTime.minute();
     }
 
-    activeAlarm[alarmId].endTimeSecond = currentTime.Second();
+    activeAlarm[alarmId].endTimeSecond = currentTime.second();
+}
+
+void printAlarm(int alarmId) {
+    Serial.println("New Alarm ");
+    Serial.print(alarmId);
+    Serial.print(" > ");
+    Serial.print(activeAlarm[alarmId].endTimeHour);
+    Serial.print(":");
+    Serial.print(activeAlarm[alarmId].endTimeMinute);
+    Serial.print(":");
+    Serial.print(activeAlarm[alarmId].endTimeSecond);
 }
 
 void matchAlarm() {
     // Match condition
     for (int i=0; i < 2; i++) {
         // Look for motion 5 min before alarm triggered.
-        if (currentTime.Hour() == activeAlarm[i].endTimeHour && currentTime.Minute() >= activeAlarm[i].endTimeMinute && currentTime.Second() >= activeAlarm[i].endTimeSecond && !activeAlarm[i].isAlarmTriggered) {
+        if (currentTime.hour() == activeAlarm[i].endTimeHour && currentTime.minute() >= activeAlarm[i].endTimeMinute && currentTime.second() >= activeAlarm[i].endTimeSecond && !activeAlarm[i].isAlarmTriggered) {
             actionMessageLogger("matchAlarm :: Timer Matched - alarm triggered");
-            activeAlarm[i].isAlarmSet = 0;
-            activeAlarm[i].isAlarmTriggered = 1;
 
             // kitchenBulb handler - Check if current time reached the Off Timer and LED still ON
             if (activeAlarm[i].alarmId == 0) {
+                activeAlarm[i].isAlarmSet = 0;
+                activeAlarm[i].isAlarmTriggered = 1;
                 // Turn OFF the kitchen bulb
-                turnBulb("OFF", "kitchenBulb");
+                turnBulb("OFF", "kitchenBulb"); 
                 // unset the 2nd alarm
                 unsetAlarm(1);
-                // Writting the file
-                char msgString[] = "kit-Auto:OFF\n";
-                writeFile(msgString);
             }
 
             if (activeAlarm[i].alarmId == 1) {
@@ -328,13 +264,15 @@ void matchAlarm() {
                 // Activity detected
                 if (motionSensorStatus == HIGH) {
                   // AlarmId, AlarmType = mintue, Duration in mintue
-                  // Increase the main alarm timeline by 5 minutes
-                  updateAlarm(0, 2, 5);
-                  // Increase the second alarm also by 5 min
-                  updateAlarm(1, 2, 5);
+                  // Increase the main alarm timeline by 10 or 3 minutes based on active Hour
+                  updateAlarm(0, 2, kitchenLightOnDuration == activeHourDuration ? longAlarmIncrementDuration : shortAlarmIncrementDuration);
+                  printAlarm(0);
+                  // Increase the second alarm timeline by 10 or 3 minutes based on active Hour
+                  updateAlarm(1, 2, kitchenLightOnDuration == activeHourDuration ? longAlarmIncrementDuration : shortAlarmIncrementDuration);
+                  printAlarm(1);
 
                   Serial.println("UpdatAlarm called");
-                }               
+                }
             }
         }
     }
@@ -349,17 +287,14 @@ void kitchen_control() {
             checkActiveHours();
             // First Alarm configured - alarmId, alarmType, duration,
             setAlarm(0, 2, kitchenLightOnDuration);
-            // Setup the second alarm for lookup action - detect motion [Just before 3 minute before closing the light]
+            // Setup the second alarm for lookup action - detect motion [Just before 2 minute before closing the light]
             // SetAlarm - alarmId, alarmType, duration
-            setAlarm(1, 2, (kitchenLightOnDuration - 3));
+            // 
+            setAlarm(1, 2, (kitchenLightOnDuration - (kitchenLightOnDuration == activeHourDuration ? longLookUpPeriod : shortLookUpPeriod)));
             // Turn On the kitchen bulb
             turnBulb("ON", "kitchenBulb");
             // Set the flag true
             isKitchenLedOn = true;
-            // Prepare the string for file writting
-            char msgString[] = "kitchen:ON\n";
-            // File writting activities
-            writeFile(msgString);
         }
     }
 
@@ -371,80 +306,64 @@ void kitchen_control() {
         unsetAlarm(1);
         isKitchenLedOn = false;
         turnBulb("OFF", "kitchenBulb");
-        char msgString[] = "kitchen:OFF\n";
-        writeFile(msgString);
         delay(100);
     }
 
     matchAlarm();
 }
 
+// For RTC module setup
 void rtcSetup() {
-    Serial.print("compiled: ");
-    Serial.print(__DATE__);
-    Serial.println(__TIME__);
+    Serial.println("rtcSetup :: Health status check");
+    delay(1000);
 
-    Rtc.Begin();
-
-    RtcDateTime compiled = RtcDateTime(__DATE__, __TIME__);
-    Serial.println();
-
-    if (!Rtc.IsDateTimeValid()) {
-        // Common Causes:
-        //    1) first time you ran and the device wasn't running yet
-        //    2) the battery on the device is low or even missing
-
-        Serial.println("RTC lost confidence in the DateTime!");
-        Rtc.SetDateTime(compiled);
+    if (! rtc.begin()) {
+        Serial.println("rtcSetup :: Couldn't find RTC");
+        Serial.flush();
+        while (1) delay(10);
     }
 
-    if (Rtc.GetIsWriteProtected()) {
-        Serial.println("RTC was write protected, enabling writing now");
-        Rtc.SetIsWriteProtected(false);
+    if (! rtc.isrunning()) {
+        Serial.println("rtcSetup :: RTC is NOT running, Please uncomment below lines to set the time!");
+        // When time needs to be set on a new device, or after a power loss, the
+        // following line sets the RTC to the date & time this sketch was compiled
+        //rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+        
+        // This line sets the RTC with an explicit date & time, for example to set
+        // January 21, 2014 at 3am you would call:
+        // rtc.adjust(DateTime(2014, 1, 21, 3, 0, 0));
     }
 
-    if (!Rtc.GetIsRunning()) {
-        Serial.println("RTC was not actively running, starting now");
-        Rtc.SetIsRunning(true);
-    }
+    Serial.println("rtcSetup :: RTC is running fine and Current time >");
 
-    RtcDateTime now = Rtc.GetDateTime();
-    if (now < compiled) {
-        Serial.println("RTC is older than compile time!  (Updating DateTime)");
-        Rtc.SetDateTime(compiled);
-    } else if (now > compiled) {
-        Serial.println("RTC is newer than compile time. (this is expected)");
-    } else if (now == compiled) {
-        Serial.println("RTC is the same as compile time! (not expected but all is fine)");
-    }
+    currentTime = rtc.now();
+    Serial.println(currentTime.hour());
+    Serial.print(":");
+    Serial.print(currentTime.minute());
+    Serial.print(":");
+    Serial.print(currentTime.second());
 }
 
 void setup() {
     // Debug console
-    Serial.begin(57600);
+    Serial.begin(115200);
 
     // Initial setup
     pinMode(kitchBulbRelay, OUTPUT);
+    pinMode(kitchenMotionSensor, INPUT);    
     pinMode(kitchenBulbSwitch, INPUT_PULLUP);
 
     // Setup the RTC mmodule
     rtcSetup();
-    // File system mount process
-    fileSystemMount();
+
     Serial.println("Setup :: Setup completed");
 }
 
 void loop() {
-    currentTime = Rtc.GetDateTime();
-
-    if (!currentTime.IsValid()) {
-        // Common Causes:
-        // the battery on the device is low or even missing and the power line was disconnected
-        Serial.println("RTC lost confidence in the DateTime!");
-    }
+    currentTime = rtc.now();
 
     // call all manual control i.e. switches, relay
     kitchen_control();
 
-    delay(1000);
+    delay(300);
 }

@@ -7,12 +7,9 @@
        need to press the switch OFF and then ON.
     2. Work normally when switch is turned OFF. Irrespective of time left, the bulb has to be turned OFF.
 
-  version - 2.0.0
   Updates/ Fixes [status]
-  > RTC change from DS1302 to DS1307 (two pins)
-  > isDataLoggingEnabled - removed this feature
-  > Including motion sensor to catch the activities before closing the light, if found then increase the time
-  > Changed the baud rate to 115200
+  > Include Fridge based automation also
+  > Include double click switch behaviour to override the automation.
 
   Debug info -
   1> Always check the active hours for lighting. Standard time - 6pm to 7am
@@ -24,6 +21,7 @@
 // GPIO Pin configuration details
 // ------------------------------
 // D1 & D2 - Reserved for I2C enabled devices (DS1307 RTC)
+#define buzzer D3
 #define kitchBulbRelay D5
 #define kitchenBulbSwitch D6
 #define kitchenMotionSensor D7
@@ -88,6 +86,35 @@ struct Time morningActiveStartTime = {5, 0};    // 5.00AM to 7.00AM
 struct Time morningActiveEndTime = {7, 0};
 struct Time eveningActiveStartTime = {18, 0};   // 6.00PM to 10.30PM 
 struct Time eveningActiveEndTime = {22, 30};
+
+void BuzzerOn(String duration) {
+  if (duration == "short") {
+      digitalWrite(buzzer, HIGH);
+      delay(500);
+      digitalWrite(buzzer, LOW);
+      delay(500);
+
+      digitalWrite(buzzer, HIGH);
+      delay(500);
+      digitalWrite(buzzer, LOW);
+      delay(500);
+  } else {
+      digitalWrite(buzzer, HIGH);
+      delay(500);
+      digitalWrite(buzzer, LOW);
+      delay(500);
+
+      digitalWrite(buzzer, HIGH);
+      delay(500);
+      digitalWrite(buzzer, LOW);
+      delay(500);
+
+      digitalWrite(buzzer, HIGH);
+      delay(500);
+      digitalWrite(buzzer, LOW);
+      delay(500);
+  }
+}
 
 // Indicate (boolean) if time if greater/less than given time
 bool diffBtwTimePeriod(struct Time start, struct Time stop) {
@@ -271,7 +298,9 @@ void matchAlarm() {
                   updateAlarm(1, 2, kitchenLightOnDuration == activeHourDuration ? longAlarmIncrementDuration : shortAlarmIncrementDuration);
                   printAlarm(1);
 
-                  Serial.println("UpdatAlarm called");
+                  Serial.println("UpdatAlarm called and sound the buzzer");
+                  // Two short beep
+                  BuzzerOn("short");
                 }
             }
         }
@@ -349,6 +378,7 @@ void setup() {
     Serial.begin(115200);
 
     // Initial setup
+    pinMode(buzzer, OUTPUT);
     pinMode(kitchBulbRelay, OUTPUT);
     pinMode(kitchenMotionSensor, INPUT);    
     pinMode(kitchenBulbSwitch, INPUT_PULLUP);
@@ -356,6 +386,8 @@ void setup() {
     // Setup the RTC mmodule
     rtcSetup();
 
+    // buzzer sound
+    BuzzerOn("long");
     Serial.println("Setup :: Setup completed");
 }
 
